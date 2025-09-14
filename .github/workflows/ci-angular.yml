@@ -27,6 +27,14 @@ jobs:
 
       - name: Build Angular App
         run: npm run build -- --configuration production
+  
+      - name: Get build path dynamically
+        id: get-build-path
+        run: |
+          PROJECT=${{ github.event.inputs.project }}
+          BUILD_PATH=$(node -p "require('./angular.json').projects[\"$PROJECT\"].architect.build.options.outputPath")
+          echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
+          echo "PROJECT=$PROJECT" >> $GITHUB_ENV
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -53,11 +61,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Get build path dynamically
+        id: get-build-path
+        run: |
+          PROJECT=${{ github.event.inputs.project }}
+          BUILD_PATH=$(node -p "require('./angular.json').projects[\"$PROJECT\"].architect.build.options.outputPath")
+          echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
+          echo "PROJECT=$PROJECT" >> $GITHUB_ENV 
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: angular-dist
-          path: dist/vyracare-app-shell
+          path: $BUILD_PATH
 
       - name: Run unit tests
         run: npm run test -- --watch=false --browsers=ChromeHeadless
