@@ -38,6 +38,7 @@ jobs:
           fi
           echo "Usando projeto: $PROJECT"
           BUILD_PATH=$(node -p "require('./angular.json').projects['$PROJECT'].architect.build.options.outputPath")
+          echo "Usando o outputpath: $BUILD_PATH"
           echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
           echo "PROJECT=$PROJECT" >> $GITHUB_ENV
 
@@ -45,11 +46,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: angular-dist
-          path: dist/$BUILD_PATH
+          path: $BUILD_PATH
 
       - name: Set build folder output
         id: set-output
-        run: echo "build-folder=dist/$BUILD_PATH" >> $GITHUB_OUTPUT
+        run: echo "build-folder=$BUILD_PATH" >> $GITHUB_OUTPUT
 
   test:
     runs-on: ubuntu-latest
@@ -83,7 +84,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: angular-dist
-          path: dist/$BUILD_PATH
+          path: $BUILD_PATH
 
       - name: Run unit tests
         run: npm run test -- --watch=false --browsers=ChromeHeadless
