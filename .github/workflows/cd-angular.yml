@@ -7,6 +7,10 @@ on:
         description: 'Branch que disparou o deploy'
         required: true
         type: string
+      project:
+        description: 'Nome do projeto Angular (igual ao angular.json)'
+        required: false
+        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -28,6 +32,7 @@ jobs:
       AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
       CLOUDFRONT_ID: ${{ secrets.CLOUDFRONT_ID }}
+
     steps:
       # Checkout do código
       - name: Checkout repository
@@ -43,7 +48,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Build Angular na develop
+      # Build Angular
       - name: Build Angular
         run: npm run build -- --configuration production
 
@@ -74,7 +79,7 @@ jobs:
       - name: Detect active/inactive version
         id: detect
         run: |
-          ACTIVE=$(aws cloudfront get-distribution --id $CLOUDFRONT_ID | jq -r '.Distribution.Origins.Items[0].OriginPath')
+          ACTIVE=$(aws cloudfront get-distribution --id ${{ env.CLOUDFRONT_ID }} | jq -r '.Distribution.Origins.Items[0].OriginPath')
           if [[ "$ACTIVE" == "/blue" ]]; then
             INACTIVE="green"
           else
@@ -110,16 +115,17 @@ jobs:
       # Swap CloudFront para nova versão
       - name: Swap CloudFront
         run: |
-          DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id $CLOUDFRONT_ID)
+          DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id ${{ env.CLOUDFRONT_ID }})
           ETAG=$(echo $DISTRIBUTION_CONFIG | jq -r '.ETag')
           CONFIG=$(echo $DISTRIBUTION_CONFIG | jq '.DistributionConfig')
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "$DEPLOY_PATH" '.Origins.Items[0].OriginPath=$path')
-          aws cloudfront update-distribution --id $CLOUDFRONT_ID --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
+          aws cloudfront update-distribution --id ${{ env.CLOUDFRONT_ID }} --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
 
       # Invalidação de cache CloudFront
       - name: Invalidate CloudFront cache
-        run: aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"
+        run: aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_ID }} --paths "/*"
 
+      # Abrir PR para main
       - name: Open Pull Request to main
         uses: repo-sync/pull-request@v2
         with:
@@ -136,11 +142,11 @@ jobs:
         if: failure()
         run: |
           echo "Rollback triggered. Reverting to previous version: ${{ steps.detect.outputs.previous-path }}"
-          DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id $CLOUDFRONT_ID)
+          DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id ${{ env.CLOUDFRONT_ID }})
           ETAG=$(echo $DISTRIBUTION_CONFIG | jq -r '.ETag')
           CONFIG=$(echo $DISTRIBUTION_CONFIG | jq '.DistributionConfig')
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "${{ steps.detect.outputs.previous-path }}" '.Origins.Items[0].OriginPath=$path')
-          aws cloudfront update-distribution --id $CLOUDFRONT_ID --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
+          aws cloudfront update-distribution --id ${{ env.CLOUDFRONT_ID }} --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
 
   open-pr-main:
     needs: deploy
