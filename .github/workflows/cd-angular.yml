@@ -90,19 +90,19 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           INACTIVE_PATH="$INACTIVE/$TIMESTAMP"
           echo "Deploying build to folder $INACTIVE_PATH"
-          aws s3 sync ${{ env.BUILD_PATH }} s3://$S3_BUCKET_NAME/$INACTIVE_PATH --delete
+          aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$INACTIVE_PATH --delete
           echo "DEPLOY_PATH=/$INACTIVE_PATH" >> $GITHUB_ENV
 
       # Cleanup builds antigas (mantendo 3 últimas)
       - name: Cleanup old builds
         run: |
           for folder in blue green; do
-            builds=$(aws s3 ls s3://$S3_BUCKET_NAME/$folder/ | awk '{print $2}' | sort)
+            builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '{print $2}' | sort)
             total=$(echo "$builds" | wc -l)
             if [ $total -gt 3 ]; then
               to_delete=$(echo "$builds" | head -n $(($total - 3)))
               for d in $to_delete; do
-                aws s3 rm s3://$S3_BUCKET_NAME/$folder/$d --recursive
+                aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$folder/$d --recursive
               done
             fi
           done
