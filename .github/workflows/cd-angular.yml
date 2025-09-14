@@ -51,8 +51,16 @@ jobs:
       - name: Get build path dynamically
         id: get-build-path
         run: |
-          BUILD_PATH=$(node -p "require('./angular.json').projects['vyracare-app-shell'].architect.build.options.outputPath")
+          PROJECT="${{ inputs.project }}"
+          if [ -z "$PROJECT" ]; then
+            echo "Nenhum input recebido, detectando primeiro projeto do angular.json..."
+            PROJECT=$(node -p "Object.keys(require('./angular.json').projects)[0]")
+          fi
+          echo "Usando projeto: $PROJECT"
+          BUILD_PATH=$(node -p "require('./angular.json').projects[\"$PROJECT\"].architect.build.options.outputPath")
+          echo "Usando o outputPath: $BUILD_PATH"
           echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
+          echo "PROJECT=$PROJECT" >> $GITHUB_ENV
 
       # Configurar AWS CLI
       - name: Configure AWS CLI
@@ -82,7 +90,7 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           INACTIVE_PATH="$INACTIVE/$TIMESTAMP"
           echo "Deploying build to folder $INACTIVE_PATH"
-          aws s3 sync $BUILD_PATH s3://$S3_BUCKET_NAME/$INACTIVE_PATH --delete
+          aws s3 sync ${{ env.BUILD_PATH }} s3://$S3_BUCKET_NAME/$INACTIVE_PATH --delete
           echo "DEPLOY_PATH=/$INACTIVE_PATH" >> $GITHUB_ENV
 
       # Cleanup builds antigas (mantendo 3 últimas)
