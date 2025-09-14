@@ -7,10 +7,6 @@ on:
         description: 'Branch que disparou o deploy'
         required: true
         type: string
-      build-path:
-        description: 'Caminho do build a ser deployado'
-        required: true
-        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -51,6 +47,13 @@ jobs:
       - name: Build Angular
         run: npm run build -- --configuration production
 
+      # Obter build path dinamicamente do angular.json
+      - name: Get build path dynamically
+        id: get-build-path
+        run: |
+          BUILD_PATH=$(node -p "require('./angular.json').projects['vyracare-app-shell'].architect.build.options.outputPath")
+          echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
+
       # Configurar AWS CLI
       - name: Configure AWS CLI
         uses: aws-actions/configure-aws-credentials@v2
@@ -79,7 +82,7 @@ jobs:
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           INACTIVE_PATH="$INACTIVE/$TIMESTAMP"
           echo "Deploying build to folder $INACTIVE_PATH"
-          aws s3 sync dist/vyracare-app-shell s3://$S3_BUCKET_NAME/$INACTIVE_PATH --delete
+          aws s3 sync $BUILD_PATH s3://$S3_BUCKET_NAME/$INACTIVE_PATH --delete
           echo "DEPLOY_PATH=/$INACTIVE_PATH" >> $GITHUB_ENV
 
       # Cleanup builds antigas (mantendo 3 últimas)
@@ -130,7 +133,6 @@ jobs:
           CONFIG=$(echo $DISTRIBUTION_CONFIG | jq '.DistributionConfig')
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "${{ steps.detect.outputs.previous-path }}" '.Origins.Items[0].OriginPath=$path')
           aws cloudfront update-distribution --id $CLOUDFRONT_ID --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
-
 
   open-pr-main:
     needs: deploy
