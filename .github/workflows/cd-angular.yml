@@ -22,12 +22,17 @@ on:
         required: false
       AWS_REGION:
         required: false
+      AWS_ROLE_ARN:
+        required: false
       PAT_TOKEN:
         required: true   # Token para abrir PR
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
@@ -63,12 +68,31 @@ jobs:
           echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
           echo "PROJECT=$PROJECT" >> $GITHUB_ENV
 
-      # Configurar AWS CLI
-      - name: Configure AWS CLI
+      - name: Validate AWS credentials
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+              echo "Missing AWS credentials. Provide AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_ROLE_ARN."
+              exit 1
+            fi
+          fi
+
+      # Configurar AWS CLI (Access Keys)
+      - name: Configure AWS CLI (Access Keys)
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Configurar AWS CLI (OIDC Role)
+      - name: Configure AWS CLI (OIDC Role)
+        if: ${{ (secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '') && secrets.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: vyracare-angular-cd
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
