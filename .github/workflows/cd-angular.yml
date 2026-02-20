@@ -17,9 +17,9 @@ on:
       AWS_SECRET_ACCESS_KEY:
         required: true
       S3_BUCKET_NAME:
-        required: true
+        required: false
       CLOUDFRONT_ID:
-        required: true
+        required: false
       AWS_REGION:
         required: false
       PAT_TOKEN:
@@ -48,10 +48,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Build Angular
-      - name: Build Angular
-        run: npm run build -- --configuration production
-
       # Obter build path dinamicamente do angular.json
       - name: Get build path dynamically
         id: get-build-path
@@ -75,6 +71,93 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.2
+
+      - name: Detect bucket and CloudFront
+        run: |
+          set -euo pipefail
+
+          repo_name="${GITHUB_REPOSITORY##*/}"
+          bucket_name="$(echo "$repo_name" | tr '[:upper:]' '[:lower:]')"
+
+          echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
+          echo "Bucket name resolved to: $bucket_name"
+
+          if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
+            s3_exists="true"
+          else
+            s3_exists="false"
+          fi
+
+          cloudfront_id=$(aws cloudfront list-distributions | jq -r --arg bucket "$bucket_name" '.DistributionList.Items[]? | select(.Origins.Items[].DomainName | contains($bucket)) | .Id' | head -n 1)
+          if [ -n "$cloudfront_id" ] && [ "$cloudfront_id" != "None" ]; then
+            echo "CLOUDFRONT_ID=$cloudfront_id" >> $GITHUB_ENV
+          fi
+
+          echo "S3 exists: $s3_exists"
+          echo "CloudFront ID: ${cloudfront_id:-none}"
+
+          if [ "$s3_exists" = "true" ] && [ -n "${cloudfront_id:-}" ] && [ "$cloudfront_id" != "None" ]; then
+            echo "NEED_INFRA=false" >> $GITHUB_ENV
+            echo "Need infra: false"
+          else
+            echo "NEED_INFRA=true" >> $GITHUB_ENV
+            echo "Need infra: true"
+          fi
+
+      - name: Checkout Infra CloudFront Bucket
+        if: env.NEED_INFRA == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: vyracare/vyracare-infra-cloudfront-bucket
+          token: ${{ secrets.PAT_TOKEN }}
+          path: infra-cloudfront
+
+      - name: Provision CloudFront + Bucket
+        if: env.NEED_INFRA == 'true'
+        working-directory: ./infra-cloudfront
+        run: |
+          set -euo pipefail
+
+          terraform init
+
+          bucket_name="${S3_BUCKET_NAME}"
+          if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
+            terraform import aws_s3_bucket.vyracareshell_bucket "$bucket_name" || true
+          fi
+
+          terraform apply -auto-approve \
+            -var "project_name=$bucket_name" \
+            -var "region=$AWS_REGION" \
+            -var "cloudfront_comment=CloudFront Distribution for $bucket_name"
+
+          bucket_name=$(terraform output -raw s3_bucket_name)
+          cloudfront_id=$(terraform output -raw cloudfront_distribution_id)
+          echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
+          echo "CLOUDFRONT_ID=$cloudfront_id" >> $GITHUB_ENV
+          echo "Provisioned bucket: $bucket_name"
+          echo "Provisioned CloudFront ID: $cloudfront_id"
+
+      - name: Wait for CloudFront to be deployed
+        if: env.NEED_INFRA == 'true'
+        run: |
+          set -euo pipefail
+          echo "Waiting for CloudFront distribution ${CLOUDFRONT_ID} to be deployed..."
+          attempts=30
+          interval=60
+          for i in $(seq 1 $attempts); do
+            status=$(aws cloudfront get-distribution --id "${CLOUDFRONT_ID}" | jq -r '.Distribution.Status')
+            echo "[$i/$attempts] CloudFront status: ${status}"
+            if [ "$status" = "Deployed" ]; then
+              echo "CloudFront distribution deployed."
+              exit 0
+            fi
+            sleep $interval
+          done
+          echo "CloudFront not deployed after $((attempts * interval))s. Continuing pipeline."
       # Detectar versão ativa/inativa
       - name: Detect active/inactive version
         id: detect
@@ -88,6 +171,10 @@ jobs:
           echo "ACTIVE=$ACTIVE" >> $GITHUB_ENV
           echo "INACTIVE=$INACTIVE" >> $GITHUB_ENV
           echo "previous-path=$ACTIVE" >> $GITHUB_OUTPUT
+
+      # Build Angular (after infra is ensured)
+      - name: Build Angular
+        run: npm run build -- --configuration production
 
       # Deploy para pasta inativa com timestamp
       - name: Deploy to INACTIVE folder with timestamp
@@ -165,3 +252,4 @@ jobs:
           pr_body: |
             PR automática criada pelo pipeline.
             Branch de origem: `${{ inputs.branch-name }}`
+
