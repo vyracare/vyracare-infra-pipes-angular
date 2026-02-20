@@ -37,6 +37,9 @@ jobs:
       AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
       CLOUDFRONT_ID: ${{ secrets.CLOUDFRONT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
     steps:
       # Checkout do código
@@ -70,8 +73,8 @@ jobs:
 
       - name: Validate AWS credentials
         run: |
-          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
-            if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+          if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
+            if [ -z "${AWS_ROLE_ARN}" ]; then
               echo "Missing AWS credentials. Provide AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_ROLE_ARN."
               exit 1
             fi
@@ -79,19 +82,19 @@ jobs:
 
       # Configurar AWS CLI (Access Keys)
       - name: Configure AWS CLI (Access Keys)
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       # Configurar AWS CLI (OIDC Role)
       - name: Configure AWS CLI (OIDC Role)
-        if: ${{ (secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '') && secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ (env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '') && env.AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: vyracare-angular-cd
           aws-region: ${{ env.AWS_REGION }}
 
