@@ -110,6 +110,7 @@ jobs:
           repo_name="${GITHUB_REPOSITORY##*/}"
           bucket_name="$(echo "$repo_name" | tr '[:upper:]' '[:lower:]')"
 
+          echo "REPO_NAME=$repo_name" >> $GITHUB_ENV
           echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
           echo "Bucket name resolved to: $bucket_name"
 
@@ -153,13 +154,13 @@ jobs:
 
           bucket_name="${S3_BUCKET_NAME}"
           if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
-            terraform import aws_s3_bucket.vyracareshell_bucket "$bucket_name" || true
+            terraform import aws_s3_bucket.app_bucket "$bucket_name" || true
           fi
 
           terraform apply -auto-approve \
             -var "project_name=$bucket_name" \
             -var "region=$AWS_REGION" \
-            -var "cloudfront_comment=CloudFront Distribution for $bucket_name"
+            -var "cloudfront_comment=${REPO_NAME} em Angular CloudFront"
 
           bucket_name=$(terraform output -raw s3_bucket_name)
           cloudfront_id=$(terraform output -raw cloudfront_distribution_id)
