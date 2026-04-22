@@ -142,10 +142,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$CODEARTIFACT_DOMAIN" ]; then
-            npm install --legacy-peer-deps
+            npm install --legacy-peer-deps --package-lock=false
           else
             npm ci
           fi
+
+      - name: Validate Vyracare Design System package
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
+        run: |
+          set -euo pipefail
+          npm ls @vyracare/design-system
+          test -f node_modules/@vyracare/design-system/package.json
+          test -f node_modules/@vyracare/design-system/index.d.ts
+          test -f node_modules/@vyracare/design-system/fesm2022/vyracare-design-system.mjs
+          test -f node_modules/@vyracare/design-system/styles/_index.scss
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
