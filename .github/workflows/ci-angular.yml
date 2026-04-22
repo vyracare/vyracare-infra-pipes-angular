@@ -98,6 +98,10 @@ jobs:
         if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
         run: |
           set -euo pipefail
+          if ! node -e "const pkg=require('./package.json'); process.exit(pkg.dependencies?.['@vyracare/design-system'] ? 0 : 1)"; then
+            echo "@vyracare/design-system is not a dependency. Skipping package validation."
+            exit 0
+          fi
           npm ls @vyracare/design-system
           test -f node_modules/@vyracare/design-system/package.json
           test -f node_modules/@vyracare/design-system/index.d.ts
@@ -199,6 +203,10 @@ jobs:
         if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
         run: |
           set -euo pipefail
+          if ! node -e "const pkg=require('./package.json'); process.exit(pkg.dependencies?.['@vyracare/design-system'] ? 0 : 1)"; then
+            echo "@vyracare/design-system is not a dependency. Skipping package validation."
+            exit 0
+          fi
           npm ls @vyracare/design-system
           test -f node_modules/@vyracare/design-system/package.json
           test -f node_modules/@vyracare/design-system/index.d.ts
@@ -225,4 +233,4 @@ jobs:
           path: ${{ env.BUILD_PATH }}
 
       - name: Run unit tests
-        run: npm run test -- --watch=false --browsers=ChromeHeadless
+        run: npm run test
