@@ -110,16 +110,33 @@ jobs:
           role-session-name: vyracare-angular-cd
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to CodeArtifact
+      - name: Configure npm registries
         if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.CODEARTIFACT_REPO != '' && env.CODEARTIFACT_DOMAIN_OWNER != '' }}
         run: |
           set -euo pipefail
-          aws codeartifact login \
-            --tool npm \
+          CODEARTIFACT_ENDPOINT="$(aws codeartifact get-repository-endpoint \
             --domain "$CODEARTIFACT_DOMAIN" \
             --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
             --repository "$CODEARTIFACT_REPO" \
-            --region "$AWS_REGION"
+            --format npm \
+            --region "$AWS_REGION" \
+            --query repositoryEndpoint \
+            --output text)"
+          CODEARTIFACT_AUTH_TOKEN="$(aws codeartifact get-authorization-token \
+            --domain "$CODEARTIFACT_DOMAIN" \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --region "$AWS_REGION" \
+            --query authorizationToken \
+            --output text)"
+          echo "::add-mask::$CODEARTIFACT_AUTH_TOKEN"
+          CODEARTIFACT_REGISTRY="${CODEARTIFACT_ENDPOINT%/}/"
+          CODEARTIFACT_HOST="${CODEARTIFACT_REGISTRY#https://}"
+
+          {
+            echo "registry=https://registry.npmjs.org/"
+            echo "@vyracare:registry=$CODEARTIFACT_REGISTRY"
+            echo "//$CODEARTIFACT_HOST:_authToken=$CODEARTIFACT_AUTH_TOKEN"
+          } > .npmrc
 
       - name: Install dependencies
         run: |
