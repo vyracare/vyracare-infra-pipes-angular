@@ -11,6 +11,18 @@ on:
         description: 'Nome do projeto Angular (igual ao angular.json)'
         required: false
         type: string
+      codeartifact-domain:
+        description: 'Nome do domain no AWS CodeArtifact'
+        required: false
+        type: string
+      codeartifact-repo:
+        description: 'Nome do repository no AWS CodeArtifact'
+        required: false
+        type: string
+      codeartifact-domain-owner:
+        description: 'Account owner do domain no AWS CodeArtifact'
+        required: false
+        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -40,6 +52,9 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      CODEARTIFACT_DOMAIN: ${{ inputs.codeartifact-domain }}
+      CODEARTIFACT_REPO: ${{ inputs.codeartifact-repo }}
+      CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact-domain-owner }}
 
     steps:
       # Checkout do código
@@ -53,9 +68,6 @@ jobs:
           node-version: 20
 
       # Instalar dependências
-      - name: Install dependencies
-        run: npm ci
-
       # Obter build path dinamicamente do angular.json
       - name: Get build path dynamically
         id: get-build-path
@@ -97,6 +109,26 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: vyracare-angular-cd
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to CodeArtifact
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.CODEARTIFACT_REPO != '' && env.CODEARTIFACT_DOMAIN_OWNER != '' }}
+        run: |
+          set -euo pipefail
+          aws codeartifact login \
+            --tool npm \
+            --domain "$CODEARTIFACT_DOMAIN" \
+            --domain-owner "$CODEARTIFACT_DOMAIN_OWNER" \
+            --repository "$CODEARTIFACT_REPO" \
+            --region "$AWS_REGION"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          if [ -n "$CODEARTIFACT_DOMAIN" ]; then
+            npm install --legacy-peer-deps
+          else
+            npm ci
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
