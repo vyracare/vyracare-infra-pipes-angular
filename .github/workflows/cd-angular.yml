@@ -61,6 +61,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Checkout infra workflow repository
+        uses: actions/checkout@v4
+        with:
+          repository: vyracare/vyracare-infra-pipes-angular
+          ref: main
+          path: .infra-pipes-angular
+          token: ${{ secrets.PAT_TOKEN }}
+
       # Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -201,7 +209,7 @@ jobs:
 
       - name: Provision CloudFront + Bucket
         if: env.NEED_INFRA == 'true'
-        working-directory: ./infra/cloudfront-bucket
+        working-directory: ./.infra-pipes-angular/infra/cloudfront-bucket
         run: |
           set -euo pipefail
 
