@@ -52,6 +52,15 @@ jobs:
         with:
           node-version: 20
 
+      - name: Validate AWS credentials
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
+        run: |
+          if { [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; } && [ -z "${AWS_ROLE_ARN}" ]; then
+            echo "Missing AWS credentials. The caller workflow did not receive AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY and AWS_ROLE_ARN is also empty."
+            echo "Check whether the repository has access to the organization secrets or define the secrets at repository level."
+            exit 1
+          fi
+
       - name: Configure AWS credentials (Access Keys)
         if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v4
@@ -165,6 +174,15 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 20
+
+      - name: Validate AWS credentials
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
+        run: |
+          if { [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; } && [ -z "${AWS_ROLE_ARN}" ]; then
+            echo "Missing AWS credentials. The caller workflow did not receive AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY and AWS_ROLE_ARN is also empty."
+            echo "Check whether the repository has access to the organization secrets or define the secrets at repository level."
+            exit 1
+          fi
 
       - name: Configure AWS credentials (Access Keys)
         if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
