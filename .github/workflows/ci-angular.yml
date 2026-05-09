@@ -26,6 +26,8 @@ on:
         required: false
       AWS_SECRET_ACCESS_KEY:
         required: false
+      AWS_ROLE_ARN:
+        required: false
 
 jobs:
   build:
@@ -39,6 +41,7 @@ jobs:
       CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact-domain-owner }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
     steps:
       - name: Checkout repository
@@ -49,12 +52,20 @@ jobs:
         with:
           node-version: 20
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (Access Keys)
         if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (OIDC Role)
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' && (env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '') && env.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: vyracare-angular-ci
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure npm registries
@@ -145,6 +156,7 @@ jobs:
       CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact-domain-owner }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -154,12 +166,20 @@ jobs:
         with:
           node-version: 20
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (Access Keys)
         if: ${{ env.CODEARTIFACT_DOMAIN != '' && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure AWS credentials (OIDC Role)
+        if: ${{ env.CODEARTIFACT_DOMAIN != '' && (env.AWS_ACCESS_KEY_ID == '' || env.AWS_SECRET_ACCESS_KEY == '') && env.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: vyracare-angular-test
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure npm registries
