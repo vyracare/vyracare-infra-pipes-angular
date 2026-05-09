@@ -199,17 +199,9 @@ jobs:
             echo "Need infra: true"
           fi
 
-      - name: Checkout Infra CloudFront Bucket
-        if: env.NEED_INFRA == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: vyracare/vyracare-infra-cloudfront-bucket
-          token: ${{ secrets.PAT_TOKEN }}
-          path: infra-cloudfront
-
       - name: Provision CloudFront + Bucket
         if: env.NEED_INFRA == 'true'
-        working-directory: ./infra-cloudfront
+        working-directory: ./infra/cloudfront-bucket
         run: |
           set -euo pipefail
 
