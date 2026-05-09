@@ -227,10 +227,13 @@ jobs:
 
           bucket_name=$(terraform output -raw s3_bucket_name)
           cloudfront_id=$(terraform output -raw cloudfront_distribution_id)
+          cloudfront_domain=$(terraform output -raw cloudfront_domain)
           echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
           echo "CLOUDFRONT_ID=$cloudfront_id" >> $GITHUB_ENV
+          echo "CLOUDFRONT_DOMAIN=$cloudfront_domain" >> $GITHUB_ENV
           echo "Provisioned bucket: $bucket_name"
           echo "Provisioned CloudFront ID: $cloudfront_id"
+          echo "Provisioned CloudFront domain: $cloudfront_domain"
 
       - name: Wait for CloudFront to be deployed
         if: env.NEED_INFRA == 'true'
@@ -249,6 +252,54 @@ jobs:
             sleep $interval
           done
           echo "CloudFront not deployed after $((attempts * interval))s. Continuing pipeline."
+
+      - name: Resolve CloudFront domain
+        run: |
+          set -euo pipefail
+
+          if [ -n "${CLOUDFRONT_DOMAIN:-}" ]; then
+            echo "CloudFront domain already resolved: ${CLOUDFRONT_DOMAIN}"
+            exit 0
+          fi
+
+          cloudfront_domain=$(aws cloudfront get-distribution --id "${CLOUDFRONT_ID}" | jq -r '.Distribution.DomainName')
+          echo "CLOUDFRONT_DOMAIN=$cloudfront_domain" >> $GITHUB_ENV
+          echo "Resolved CloudFront domain: $cloudfront_domain"
+
+      - name: Carregar configuracao do shell orquestrador
+        run: |
+          set -euo pipefail
+
+          if [ ! -f ".vyracare/orchestrator-shell.json" ]; then
+            echo "HAS_ORCHESTRATOR_SHELL=false" >> $GITHUB_ENV
+            echo "Nenhuma configuracao de shell orquestrador encontrada."
+            exit 0
+          fi
+
+          python <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          config = json.loads(Path(".vyracare/orchestrator-shell.json").read_text(encoding="utf-8"))
+          repository = (config.get("repository") or "").strip()
+          environment_file = (config.get("environmentFile") or "src/environments/environments.prod.ts").strip()
+          remote_entry_property = (config.get("remoteEntryProperty") or "").strip()
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+            env_file.write(f"HAS_ORCHESTRATOR_SHELL={'true' if repository else 'false'}\n")
+            env_file.write(f"SHELL_REPOSITORY={repository}\n")
+            env_file.write(f"SHELL_ENVIRONMENT_FILE={environment_file}\n")
+            env_file.write(f"SHELL_REMOTE_ENTRY_PROPERTY={remote_entry_property}\n")
+          PY
+
+      - name: Checkout shell orquestrador
+        if: env.HAS_ORCHESTRATOR_SHELL == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SHELL_REPOSITORY }}
+          path: .shell-orchestrator
+          token: ${{ secrets.PAT_TOKEN }}
       # Detectar versão ativa/inativa
       - name: Detect active/inactive version
         id: detect
@@ -302,6 +353,59 @@ jobs:
       # Invalidação de cache CloudFront
       - name: Invalidate CloudFront cache
         run: aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_ID }} --paths "/*"
+
+      - name: Atualizar referencia no shell orquestrador
+        if: env.HAS_ORCHESTRATOR_SHELL == 'true'
+        run: |
+          set -euo pipefail
+
+          remote_entry_url="https://${CLOUDFRONT_DOMAIN}/remoteEntry.js"
+
+          cd .shell-orchestrator
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${SHELL_REPOSITORY}.git"
+
+          if git ls-remote --heads origin develop | grep -q develop; then
+            target_branch="develop"
+          else
+            target_branch="main"
+          fi
+
+          git fetch origin "${target_branch}"
+          git checkout -B "${target_branch}" "origin/${target_branch}"
+
+          python <<PY
+from pathlib import Path
+import re
+
+file_path = Path("${SHELL_ENVIRONMENT_FILE}")
+property_name = "${SHELL_REMOTE_ENTRY_PROPERTY}"
+remote_entry_url = "${remote_entry_url}"
+
+content = file_path.read_text(encoding="utf-8")
+pattern = rf"({property_name}\s*:\s*')[^']*(')"
+
+if re.search(pattern, content):
+    updated = re.sub(pattern, rf"\1{remote_entry_url}\2", content)
+else:
+    updated = content.replace(
+        "};",
+        f"  {property_name}: '{remote_entry_url}'\\n}};"
+    )
+
+if updated != content:
+    file_path.write_text(updated, encoding="utf-8")
+PY
+
+          if git diff --quiet -- "${SHELL_ENVIRONMENT_FILE}"; then
+            echo "Nenhuma alteracao necessaria no shell orquestrador."
+            exit 0
+          fi
+
+          git add "${SHELL_ENVIRONMENT_FILE}"
+          git commit -m "fix: atualiza remote entry de ${REPO_NAME}"
+          git push origin "${target_branch}"
 
       # Abrir PR para main
       - name: Open Pull Request to main
