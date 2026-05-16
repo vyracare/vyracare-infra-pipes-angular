@@ -376,27 +376,27 @@ jobs:
           git checkout -B "${target_branch}" "origin/${target_branch}"
 
           python <<PY
-from pathlib import Path
-import re
+          from pathlib import Path
+          import re
 
-file_path = Path("${SHELL_ENVIRONMENT_FILE}")
-property_name = "${SHELL_REMOTE_ENTRY_PROPERTY}"
-remote_entry_url = "${remote_entry_url}"
+          file_path = Path("${SHELL_ENVIRONMENT_FILE}")
+          property_name = "${SHELL_REMOTE_ENTRY_PROPERTY}"
+          remote_entry_url = "${remote_entry_url}"
 
-content = file_path.read_text(encoding="utf-8")
-pattern = rf"({property_name}\s*:\s*')[^']*(')"
+          content = file_path.read_text(encoding="utf-8")
+          pattern = rf"({property_name}\s*:\s*')[^']*(')"
 
-if re.search(pattern, content):
-    updated = re.sub(pattern, rf"\1{remote_entry_url}\2", content)
-else:
-    updated = content.replace(
-        "};",
-        f"  {property_name}: '{remote_entry_url}'\\n}};"
-    )
+          if re.search(pattern, content):
+              updated = re.sub(pattern, rf"\1{remote_entry_url}\2", content)
+          else:
+              updated = content.replace(
+                  "};",
+                  f"  {property_name}: '{remote_entry_url}'\\n}};"
+              )
 
-if updated != content:
-    file_path.write_text(updated, encoding="utf-8")
-PY
+          if updated != content:
+              file_path.write_text(updated, encoding="utf-8")
+          PY
 
           if git diff --quiet -- "${SHELL_ENVIRONMENT_FILE}"; then
             echo "Nenhuma alteracao necessaria no shell orquestrador."
