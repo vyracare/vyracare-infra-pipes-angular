@@ -3,9 +3,9 @@ output "s3_bucket_name" {
 }
 
 output "cloudfront_domain" {
-  value = aws_cloudfront_distribution.app_distribution.domain_name
+  value = one([for distribution in values(aws_cloudfront_distribution.app_distribution) : distribution.domain_name])
 }
 
 output "cloudfront_distribution_id" {
-  value = aws_cloudfront_distribution.app_distribution.id
+  value = one([for distribution in values(aws_cloudfront_distribution.app_distribution) : distribution.id])
 }

@@ -3,7 +3,9 @@ provider "aws" {
 }
 
 locals {
-  cloudfront_comment = var.cloudfront_comment != "" ? var.cloudfront_comment : "${var.project_name} em Angular CloudFront"
+  deployment_env     = trimspace(var.deployment_env)
+  cloudfront_comment = var.cloudfront_comment != "" ? var.cloudfront_comment : "${var.project_name} (${local.deployment_env}) em Angular CloudFront"
+  distribution_keys  = { (local.deployment_env) = local.deployment_env }
 }
 
 resource "aws_s3_bucket" "app_bucket" {
@@ -34,7 +36,7 @@ resource "aws_s3_bucket_website_configuration" "app_bucket_website" {
   }
 }
 
-resource "aws_cloudfront_origin_access_identity" "oai" {
+resource "aws_cloudfront_origin_access_identity" "shared_oai" {
   comment = "OAI for ${var.project_name} CloudFront"
 }
 
@@ -47,7 +49,7 @@ resource "aws_s3_bucket_policy" "app_bucket_policy" {
       {
         Effect = "Allow",
         Principal = {
-          AWS = aws_cloudfront_origin_access_identity.oai.iam_arn
+          AWS = aws_cloudfront_origin_access_identity.shared_oai.iam_arn
         },
         Action   = "s3:GetObject",
         Resource = "${aws_s3_bucket.app_bucket.arn}/*"
@@ -57,12 +59,14 @@ resource "aws_s3_bucket_policy" "app_bucket_policy" {
 }
 
 resource "aws_cloudfront_distribution" "app_distribution" {
+  for_each = local.distribution_keys
+
   origin {
     domain_name = aws_s3_bucket.app_bucket.bucket_regional_domain_name
     origin_id   = "S3-${var.project_name}"
 
     s3_origin_config {
-      origin_access_identity = "origin-access-identity/cloudfront/${aws_cloudfront_origin_access_identity.oai.id}"
+      origin_access_identity = "origin-access-identity/cloudfront/${aws_cloudfront_origin_access_identity.shared_oai.id}"
     }
   }
 

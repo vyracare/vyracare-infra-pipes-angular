@@ -95,13 +95,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ inputs.branch-name }}" = "main" ]; then
+          branch_name="${{ inputs.branch-name }}"
+          if [ "$branch_name" = "main" ]; then
             echo "DEPLOY_ENV=prod" >> $GITHUB_ENV
-            echo "DEPLOY_SLOT=green" >> $GITHUB_ENV
+            echo "DEPLOY_PATH_PREFIX=green" >> $GITHUB_ENV
+            echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
+          elif [ "$branch_name" = "release" ] || [[ "$branch_name" == release/* ]]; then
+            echo "DEPLOY_ENV=hml" >> $GITHUB_ENV
+            echo "DEPLOY_PATH_PREFIX=blue" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
           else
             echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
-            echo "DEPLOY_SLOT=blue" >> $GITHUB_ENV
+            echo "DEPLOY_PATH_PREFIX=versions" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
           fi
 
@@ -194,10 +199,13 @@ jobs:
 
           repo_name="${GITHUB_REPOSITORY##*/}"
           bucket_name="$(echo "${repo_name}${RESOURCE_SUFFIX}" | tr '[:upper:]' '[:lower:]')"
+          cloudfront_comment="${repo_name} (${DEPLOY_ENV}) em Angular CloudFront"
 
           echo "REPO_NAME=$repo_name" >> $GITHUB_ENV
           echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
+          echo "CLOUDFRONT_COMMENT=$cloudfront_comment" >> $GITHUB_ENV
           echo "Bucket name resolved to: $bucket_name"
+          echo "CloudFront comment resolved to: $cloudfront_comment"
 
           if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
             s3_exists="true"
@@ -205,13 +213,39 @@ jobs:
             s3_exists="false"
           fi
 
-          cloudfront_id=$(aws cloudfront list-distributions | jq -r --arg bucket "$bucket_name" '.DistributionList.Items[]? | select(.Origins.Items[].DomainName | contains($bucket)) | .Id' | head -n 1)
+          cloudfront_id=$(aws cloudfront list-distributions | jq -r \
+            --arg bucket "$bucket_name" \
+            --arg comment "$cloudfront_comment" \
+            --arg path_prefix "/${DEPLOY_PATH_PREFIX}/" '
+              (
+                [.DistributionList.Items[]?
+                  | select(.Comment == $comment and (.Origins.Items[]?.DomainName | contains($bucket)))
+                ][0].Id
+              ) // (
+                [.DistributionList.Items[]?
+                  | select((.Origins.Items[]?.DomainName | contains($bucket)) and ((.Origins.Items[0].OriginPath // "") | startswith($path_prefix)))
+                ][0].Id
+              ) // empty
+            ' | head -n 1)
+
+          existing_oai_id=$(aws cloudfront list-distributions | jq -r \
+            --arg bucket "$bucket_name" '
+              [.DistributionList.Items[]?
+                | select(.Origins.Items[]?.DomainName | contains($bucket))
+                | .Origins.Items[0].S3OriginConfig.OriginAccessIdentity
+              ][0] // empty
+            ' | sed 's#origin-access-identity/cloudfront/##')
+
           if [ -n "$cloudfront_id" ] && [ "$cloudfront_id" != "None" ]; then
             echo "CLOUDFRONT_ID=$cloudfront_id" >> $GITHUB_ENV
+          fi
+          if [ -n "${existing_oai_id:-}" ]; then
+            echo "EXISTING_OAI_ID=$existing_oai_id" >> $GITHUB_ENV
           fi
 
           echo "S3 exists: $s3_exists"
           echo "CloudFront ID: ${cloudfront_id:-none}"
+          echo "Existing OAI ID: ${existing_oai_id:-none}"
 
           if [ "$s3_exists" = "true" ] && [ -n "${cloudfront_id:-}" ] && [ "$cloudfront_id" != "None" ]; then
             echo "NEED_INFRA=false" >> $GITHUB_ENV
@@ -233,10 +267,17 @@ jobs:
           if aws s3api head-bucket --bucket "$bucket_name" >/dev/null 2>&1; then
             terraform import aws_s3_bucket.app_bucket "$bucket_name" || true
           fi
+          if [ -n "${EXISTING_OAI_ID:-}" ]; then
+            terraform import aws_cloudfront_origin_access_identity.shared_oai "${EXISTING_OAI_ID}" || true
+          fi
+          if [ -n "${CLOUDFRONT_ID:-}" ] && [ "$CLOUDFRONT_ID" != "None" ]; then
+            terraform import "aws_cloudfront_distribution.app_distribution[\"${DEPLOY_ENV}\"]" "${CLOUDFRONT_ID}" || true
+          fi
 
           terraform apply -auto-approve \
             -var "project_name=$bucket_name" \
             -var "region=$AWS_REGION" \
+            -var "deployment_env=$DEPLOY_ENV" \
             -var "cloudfront_comment=${REPO_NAME} (${DEPLOY_ENV}) em Angular CloudFront"
 
           bucket_name=$(terraform output -raw s3_bucket_name)
@@ -330,7 +371,7 @@ jobs:
       - name: Deploy to environment folder with timestamp
         run: |
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          DEPLOY_FOLDER="$DEPLOY_SLOT/$TIMESTAMP"
+          DEPLOY_FOLDER="$DEPLOY_PATH_PREFIX/$TIMESTAMP"
           echo "Deploying build to folder $DEPLOY_FOLDER"
           aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$DEPLOY_FOLDER --delete
           echo "DEPLOY_PATH=/$DEPLOY_FOLDER" >> $GITHUB_ENV
@@ -338,7 +379,7 @@ jobs:
       # Cleanup builds antigas (mantendo 3 últimas)
       - name: Cleanup old builds
         run: |
-          folder="${DEPLOY_SLOT}"
+          folder="${DEPLOY_PATH_PREFIX}"
           builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '{print $2}' | sort)
           total=$(echo "$builds" | sed '/^$/d' | wc -l)
           if [ $total -gt 3 ]; then
@@ -376,6 +417,9 @@ jobs:
           requested_branch="${{ inputs.branch-name }}"
           if git ls-remote --heads origin "${requested_branch}" | grep -q "${requested_branch}"; then
             target_branch="${requested_branch}"
+          elif [ "${requested_branch}" = "release" ] || [[ "${requested_branch}" == release/* ]]; then
+            echo "Branch release nao encontrada no shell orquestrador. Nenhuma atualizacao sera aplicada."
+            exit 0
           elif git ls-remote --heads origin develop | grep -q develop; then
             target_branch="develop"
           else

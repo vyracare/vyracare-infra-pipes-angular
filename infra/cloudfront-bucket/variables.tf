@@ -19,3 +19,14 @@ variable "cloudfront_comment" {
   description = "Comentario do CloudFront. Se vazio, usa o nome do repositorio."
   default     = ""
 }
+
+variable "deployment_env" {
+  type        = string
+  description = "Ambiente alvo do deploy do frontend: dev, hml ou prod."
+  default     = "dev"
+
+  validation {
+    condition     = contains(["dev", "hml", "prod"], trimspace(var.deployment_env))
+    error_message = "deployment_env deve ser dev, hml ou prod."
+  }
+}
