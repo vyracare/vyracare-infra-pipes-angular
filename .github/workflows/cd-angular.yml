@@ -91,6 +91,20 @@ jobs:
           echo "BUILD_PATH=$BUILD_PATH" >> $GITHUB_ENV
           echo "PROJECT=$PROJECT" >> $GITHUB_ENV
 
+      - name: Resolve deployment context
+        run: |
+          set -euo pipefail
+
+          if [ "${{ inputs.branch-name }}" = "main" ]; then
+            echo "DEPLOY_ENV=prod" >> $GITHUB_ENV
+            echo "DEPLOY_SLOT=green" >> $GITHUB_ENV
+            echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
+          else
+            echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
+            echo "DEPLOY_SLOT=blue" >> $GITHUB_ENV
+            echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
+          fi
+
       - name: Validate AWS credentials
         run: |
           if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
@@ -179,7 +193,7 @@ jobs:
           set -euo pipefail
 
           repo_name="${GITHUB_REPOSITORY##*/}"
-          bucket_name="$(echo "$repo_name" | tr '[:upper:]' '[:lower:]')"
+          bucket_name="$(echo "${repo_name}${RESOURCE_SUFFIX}" | tr '[:upper:]' '[:lower:]')"
 
           echo "REPO_NAME=$repo_name" >> $GITHUB_ENV
           echo "S3_BUCKET_NAME=$bucket_name" >> $GITHUB_ENV
@@ -223,7 +237,7 @@ jobs:
           terraform apply -auto-approve \
             -var "project_name=$bucket_name" \
             -var "region=$AWS_REGION" \
-            -var "cloudfront_comment=${REPO_NAME} em Angular CloudFront"
+            -var "cloudfront_comment=${REPO_NAME} (${DEPLOY_ENV}) em Angular CloudFront"
 
           bucket_name=$(terraform output -raw s3_bucket_name)
           cloudfront_id=$(terraform output -raw cloudfront_distribution_id)
@@ -301,45 +315,38 @@ jobs:
           path: .shell-orchestrator
           token: ${{ secrets.PAT_TOKEN }}
       # Detectar versão ativa/inativa
-      - name: Detect active/inactive version
+      - name: Capture current CloudFront origin path
         id: detect
         run: |
-          ACTIVE=$(aws cloudfront get-distribution --id ${{ env.CLOUDFRONT_ID }} | jq -r '.Distribution.Origins.Items[0].OriginPath')
-          if [[ "$ACTIVE" == "/blue" ]]; then
-            INACTIVE="green"
-          else
-            INACTIVE="blue"
-          fi
-          echo "ACTIVE=$ACTIVE" >> $GITHUB_ENV
-          echo "INACTIVE=$INACTIVE" >> $GITHUB_ENV
-          echo "previous-path=$ACTIVE" >> $GITHUB_OUTPUT
+          CURRENT_PATH=$(aws cloudfront get-distribution --id ${{ env.CLOUDFRONT_ID }} | jq -r '.Distribution.Origins.Items[0].OriginPath')
+          echo "CURRENT_PATH=$CURRENT_PATH" >> $GITHUB_ENV
+          echo "previous-path=$CURRENT_PATH" >> $GITHUB_OUTPUT
 
       # Build Angular (after infra is ensured)
       - name: Build Angular
         run: npm run build -- --configuration production
 
       # Deploy para pasta inativa com timestamp
-      - name: Deploy to INACTIVE folder with timestamp
+      - name: Deploy to environment folder with timestamp
         run: |
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          INACTIVE_PATH="$INACTIVE/$TIMESTAMP"
-          echo "Deploying build to folder $INACTIVE_PATH"
-          aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$INACTIVE_PATH --delete
-          echo "DEPLOY_PATH=/$INACTIVE_PATH" >> $GITHUB_ENV
+          DEPLOY_FOLDER="$DEPLOY_SLOT/$TIMESTAMP"
+          echo "Deploying build to folder $DEPLOY_FOLDER"
+          aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$DEPLOY_FOLDER --delete
+          echo "DEPLOY_PATH=/$DEPLOY_FOLDER" >> $GITHUB_ENV
 
       # Cleanup builds antigas (mantendo 3 últimas)
       - name: Cleanup old builds
         run: |
-          for folder in blue green; do
-            builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '{print $2}' | sort)
-            total=$(echo "$builds" | wc -l)
-            if [ $total -gt 3 ]; then
-              to_delete=$(echo "$builds" | head -n $(($total - 3)))
-              for d in $to_delete; do
-                aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$folder/$d --recursive
-              done
-            fi
-          done
+          folder="${DEPLOY_SLOT}"
+          builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '{print $2}' | sort)
+          total=$(echo "$builds" | sed '/^$/d' | wc -l)
+          if [ $total -gt 3 ]; then
+            to_delete=$(echo "$builds" | sed '/^$/d' | head -n $(($total - 3)))
+            for d in $to_delete; do
+              aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$folder/$d --recursive
+            done
+          fi
 
       # Swap CloudFront para nova versão
       - name: Swap CloudFront
@@ -366,7 +373,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${SHELL_REPOSITORY}.git"
 
-          if git ls-remote --heads origin develop | grep -q develop; then
+          requested_branch="${{ inputs.branch-name }}"
+          if git ls-remote --heads origin "${requested_branch}" | grep -q "${requested_branch}"; then
+            target_branch="${requested_branch}"
+          elif git ls-remote --heads origin develop | grep -q develop; then
             target_branch="develop"
           else
             target_branch="main"
@@ -409,6 +419,7 @@ jobs:
 
       # Abrir PR para main
       - name: Open Pull Request to main
+        if: ${{ false }}
         uses: repo-sync/pull-request@v2
         with:
           github_token: ${{ secrets.PAT_TOKEN }}
@@ -421,7 +432,7 @@ jobs:
 
       # Rollback em caso de falha
       - name: Rollback if failure
-        if: failure()
+        if: failure() && steps.detect.outputs.previous-path != ''
         run: |
           echo "Rollback triggered. Reverting to previous version: ${{ steps.detect.outputs.previous-path }}"
           DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id ${{ env.CLOUDFRONT_ID }})
@@ -433,6 +444,7 @@ jobs:
   open-pr-main:
     needs: deploy
     runs-on: ubuntu-latest
+    if: ${{ inputs.branch-name == 'develop' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3

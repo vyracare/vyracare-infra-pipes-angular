@@ -40,8 +40,13 @@ jobs:
           if [ -n "${{ inputs.rollback-path }}" ]; then
             echo "ROLLBACK_PATH=${{ inputs.rollback-path }}" >> $GITHUB_ENV
           else
-            LAST_BUILD=$(aws s3 ls s3://$S3_BUCKET_NAME/blue/ | awk '{print $2}' | sort | tail -n 1)
-            ROLLBACK_PATH="/blue/$LAST_BUILD"
+            if [[ "$S3_BUCKET_NAME" == *-dev ]]; then
+              SLOT="blue"
+            else
+              SLOT="green"
+            fi
+            LAST_BUILD=$(aws s3 ls s3://$S3_BUCKET_NAME/$SLOT/ | awk '{print $2}' | sort | tail -n 1)
+            ROLLBACK_PATH="/$SLOT/$LAST_BUILD"
             echo "ROLLBACK_PATH=$ROLLBACK_PATH" >> $GITHUB_ENV
           fi
           echo "Rollback path: $ROLLBACK_PATH"
