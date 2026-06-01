@@ -1,4 +1,4 @@
-name: Angular CD
+﻿name: Angular CD
 
 on:
   workflow_call:
@@ -57,9 +57,11 @@ jobs:
       CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact-domain-owner }}
 
     steps:
-      # Checkout do código
+      # Checkout do cÃ³digo
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Checkout infra workflow repository
         uses: actions/checkout@v4
@@ -75,7 +77,7 @@ jobs:
         with:
           node-version: 20
 
-      # Instalar dependências
+      # Instalar dependÃªncias
       # Obter build path dinamicamente do angular.json
       - name: Get build path dynamically
         id: get-build-path
@@ -355,7 +357,7 @@ jobs:
           repository: ${{ env.SHELL_REPOSITORY }}
           path: .shell-orchestrator
           token: ${{ secrets.PAT_TOKEN }}
-      # Detectar versão ativa/inativa
+      # Detectar versÃ£o ativa/inativa
       - name: Capture current CloudFront origin path
         id: detect
         run: |
@@ -376,7 +378,7 @@ jobs:
           aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$DEPLOY_FOLDER --delete
           echo "DEPLOY_PATH=/$DEPLOY_FOLDER" >> $GITHUB_ENV
 
-      # Cleanup builds antigas (mantendo 3 últimas)
+      # Cleanup builds antigas (mantendo 3 Ãºltimas)
       - name: Cleanup old builds
         run: |
           folder="${DEPLOY_PATH_PREFIX}"
@@ -389,7 +391,7 @@ jobs:
             done
           fi
 
-      # Swap CloudFront para nova versão
+      # Swap CloudFront para nova versÃ£o
       - name: Swap CloudFront
         run: |
           DISTRIBUTION_CONFIG=$(aws cloudfront get-distribution-config --id ${{ env.CLOUDFRONT_ID }})
@@ -398,7 +400,7 @@ jobs:
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "$DEPLOY_PATH" '.Origins.Items[0].OriginPath=$path')
           aws cloudfront update-distribution --id ${{ env.CLOUDFRONT_ID }} --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
 
-      # Invalidação de cache CloudFront
+      # InvalidaÃ§Ã£o de cache CloudFront
       - name: Invalidate CloudFront cache
         run: aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_ID }} --paths "/*"
 
@@ -461,19 +463,6 @@ jobs:
           git commit -m "fix: atualiza remote entry de ${REPO_NAME}"
           git push origin "${target_branch}"
 
-      # Abrir PR para main
-      - name: Open Pull Request to main
-        if: ${{ false }}
-        uses: repo-sync/pull-request@v2
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          source_branch: ${{ inputs.branch-name }}
-          destination_branch: main
-          pr_title: "Merge ${{ inputs.branch-name }} into main"
-          pr_body: |
-            PR automática criada pelo pipeline.
-            Branch de origem: `${{ inputs.branch-name }}`
-
       # Rollback em caso de falha
       - name: Rollback if failure
         if: failure() && steps.detect.outputs.previous-path != ''
@@ -485,15 +474,71 @@ jobs:
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "${{ steps.detect.outputs.previous-path }}" '.Origins.Items[0].OriginPath=$path')
           aws cloudfront update-distribution --id ${{ env.CLOUDFRONT_ID }} --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
 
-  open-pr-main:
+  open-pr-release:
     needs: deploy
     runs-on: ubuntu-latest
     if: ${{ inputs.branch-name == 'develop' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create versioned release branch
+        id: release_branch
+        run: |
+          set -euo pipefail
+          RELEASE_BRANCH="release/v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin main develop
+          if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q "$RELEASE_BRANCH"; then
+            git checkout -B "$RELEASE_BRANCH" "origin/$RELEASE_BRANCH"
+          else
+            git checkout -B "$RELEASE_BRANCH" "origin/main"
+            git push -u origin "$RELEASE_BRANCH"
+          fi
+          echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Open Pull Request to release
+        uses: repo-sync/pull-request@v2
+        with:
+          github_token: ${{ secrets.PAT_TOKEN }}
+          source_branch: develop
+          destination_branch: ${{ steps.release_branch.outputs.branch }}
+          pr_title: "PR automatic develop into ${{ steps.release_branch.outputs.branch }}"
+          pr_body: |
+            PR automatica criada pelo pipeline.
+            Branch de origem: `develop`
+            Destino: `${{ steps.release_branch.outputs.branch }}`
+
+  open-pr-main:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: ${{ inputs.branch-name == 'release' || startsWith(inputs.branch-name, 'release/') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect whether release branch is ahead of main
+        id: release_diff
+        run: |
+          set -euo pipefail
+          git fetch origin main "${{ inputs.branch-name }}"
+          git checkout -B "${{ inputs.branch-name }}" "origin/${{ inputs.branch-name }}"
+          ahead_count=$(git rev-list --count origin/main..HEAD)
+          echo "ahead_count=$ahead_count" >> $GITHUB_OUTPUT
+          if [ "$ahead_count" -gt 0 ]; then
+            echo "should_open=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_open=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Open Pull Request to main
+        if: steps.release_diff.outputs.should_open == 'true'
         uses: repo-sync/pull-request@v2
         with:
           github_token: ${{ secrets.PAT_TOKEN }}
@@ -501,6 +546,5 @@ jobs:
           destination_branch: main
           pr_title: "PR automatic ${{ inputs.branch-name }} into main"
           pr_body: |
-            PR automática criada pelo pipeline.
+            PR automatica criada pelo pipeline.
             Branch de origem: `${{ inputs.branch-name }}`
-
