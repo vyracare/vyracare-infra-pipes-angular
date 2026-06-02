@@ -114,7 +114,7 @@ jobs:
             echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
-            echo "BUILD_CONFIGURATION=production" >> $GITHUB_ENV
+            echo "BUILD_CONFIGURATION=dev" >> $GITHUB_ENV
           fi
 
       - name: Validate AWS credentials
@@ -494,9 +494,14 @@ jobs:
               target_environment_file="${candidate_environment_file}"
             fi
           elif [ "${target_branch}" = "develop" ]; then
-            candidate_environment_file="${SHELL_ENVIRONMENT_FILE/environments.prod.ts/environments.ts}"
+            candidate_environment_file="${SHELL_ENVIRONMENT_FILE/environments.prod.ts/environments.dev.ts}"
             if [ -f "${candidate_environment_file}" ]; then
               target_environment_file="${candidate_environment_file}"
+            else
+              candidate_environment_file="${SHELL_ENVIRONMENT_FILE/environments.prod.ts/environments.ts}"
+              if [ -f "${candidate_environment_file}" ]; then
+                target_environment_file="${candidate_environment_file}"
+              fi
             fi
           fi
 
