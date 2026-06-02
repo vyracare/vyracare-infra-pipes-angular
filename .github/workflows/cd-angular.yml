@@ -265,6 +265,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          export TF_INPUT=0
+          export TF_IN_AUTOMATION=1
+          export TF_VAR_project_name="${S3_BUCKET_NAME}"
+          export TF_VAR_region="${AWS_REGION}"
+          export TF_VAR_deployment_env="${DEPLOY_ENV}"
+          export TF_VAR_cloudfront_comment="${REPO_NAME} (${DEPLOY_ENV}) em Angular CloudFront"
+
           terraform init
 
           bucket_name="${S3_BUCKET_NAME}"
