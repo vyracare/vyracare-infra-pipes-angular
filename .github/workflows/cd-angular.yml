@@ -110,7 +110,7 @@ jobs:
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
           else
             echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
-            echo "DEPLOY_PATH_PREFIX=versions" >> $GITHUB_ENV
+            echo "DEPLOY_PATH_PREFIX=" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
           fi
 
@@ -217,10 +217,16 @@ jobs:
             s3_exists="false"
           fi
 
+          if [ -n "${DEPLOY_PATH_PREFIX}" ]; then
+            cloudfront_path_prefix="/${DEPLOY_PATH_PREFIX}/"
+          else
+            cloudfront_path_prefix="/"
+          fi
+
           cloudfront_id=$(aws cloudfront list-distributions | jq -r \
             --arg bucket "$bucket_name" \
             --arg comment "$cloudfront_comment" \
-            --arg path_prefix "/${DEPLOY_PATH_PREFIX}/" '
+            --arg path_prefix "$cloudfront_path_prefix" '
               (
                 [.DistributionList.Items[]?
                   | select(.Comment == $comment and (.Origins.Items[]?.DomainName | contains($bucket)))
@@ -383,7 +389,15 @@ jobs:
       - name: Deploy to environment folder with timestamp
         run: |
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          DEPLOY_FOLDER="$DEPLOY_PATH_PREFIX/$TIMESTAMP"
+          if [ -n "${DEPLOY_PATH_PREFIX}" ]; then
+            DEPLOY_FOLDER="$DEPLOY_PATH_PREFIX/$TIMESTAMP"
+          else
+            DEPLOY_FOLDER="$TIMESTAMP"
+          fi
+          if [ "${DEPLOY_ENV}" = "dev" ]; then
+            aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/blue --recursive || true
+            aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/versions --recursive || true
+          fi
           echo "Deploying build to folder $DEPLOY_FOLDER"
           aws s3 sync ${{ env.BUILD_PATH }} s3://${{ env.S3_BUCKET_NAME }}/$DEPLOY_FOLDER --delete
           echo "DEPLOY_PATH=/$DEPLOY_FOLDER" >> $GITHUB_ENV
@@ -392,12 +406,20 @@ jobs:
       - name: Cleanup old builds
         run: |
           folder="${DEPLOY_PATH_PREFIX}"
-          builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '{print $2}' | sort)
+          if [ -n "$folder" ]; then
+            builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/$folder/ | awk '/PRE / {gsub("/","",$2); print $2}' | sort)
+          else
+            builds=$(aws s3 ls s3://${{ env.S3_BUCKET_NAME }}/ | awk '/PRE / {gsub("/","",$2); print $2}' | grep -vE '^(blue|green|versions)$' | sort || true)
+          fi
           total=$(echo "$builds" | sed '/^$/d' | wc -l)
           if [ $total -gt 3 ]; then
             to_delete=$(echo "$builds" | sed '/^$/d' | head -n $(($total - 3)))
             for d in $to_delete; do
-              aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$folder/$d --recursive
+              if [ -n "$folder" ]; then
+                aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$folder/$d --recursive
+              else
+                aws s3 rm s3://${{ env.S3_BUCKET_NAME }}/$d --recursive
+              fi
             done
           fi
 
@@ -484,81 +506,3 @@ jobs:
           UPDATED_CONFIG=$(echo $CONFIG | jq --arg path "${{ steps.detect.outputs.previous-path }}" '.Origins.Items[0].OriginPath=$path')
           aws cloudfront update-distribution --id ${{ env.CLOUDFRONT_ID }} --if-match $ETAG --distribution-config "$UPDATED_CONFIG"
 
-  open-pr-release:
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: ${{ inputs.branch-name == 'develop' }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          token: ${{ secrets.PAT_TOKEN }}
-
-      - name: Create versioned release branch
-        id: release_branch
-        run: |
-          set -euo pipefail
-          RELEASE_BRANCH="release/v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch origin main develop
-          if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q "$RELEASE_BRANCH"; then
-            git checkout -B "$RELEASE_BRANCH" "origin/$RELEASE_BRANCH"
-          else
-            git checkout -B "$RELEASE_BRANCH" "origin/main"
-            git push -u origin "$RELEASE_BRANCH"
-          fi
-          echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Open Pull Request to release
-        uses: repo-sync/pull-request@v2
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          source_branch: develop
-          destination_branch: ${{ steps.release_branch.outputs.branch }}
-          pr_title: "PR automatic develop into ${{ steps.release_branch.outputs.branch }}"
-          pr_body: |
-            PR automatica criada pelo pipeline.
-            Branch de origem: `develop`
-            Destino: `${{ steps.release_branch.outputs.branch }}`
-
-  open-pr-main:
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: ${{ inputs.branch-name == 'release' || startsWith(inputs.branch-name, 'release/') }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          token: ${{ secrets.PAT_TOKEN }}
-
-      - name: Detect whether release branch is ahead of main
-        id: release_diff
-        run: |
-          set -euo pipefail
-          git fetch origin main "${{ inputs.branch-name }}"
-          git checkout -B "${{ inputs.branch-name }}" "origin/${{ inputs.branch-name }}"
-          ahead_count=$(git rev-list --count origin/main..HEAD)
-          echo "ahead_count=$ahead_count" >> $GITHUB_OUTPUT
-          if [ "$ahead_count" -gt 0 ]; then
-            echo "should_open=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_open=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Open Pull Request to main
-        if: steps.release_diff.outputs.should_open == 'true'
-        uses: repo-sync/pull-request@v2
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          source_branch: ${{ inputs.branch-name }}
-          destination_branch: main
-          pr_title: "PR automatic ${{ inputs.branch-name }} into main"
-          pr_body: |
-            PR automatica criada pelo pipeline.
-            Branch de origem: `${{ inputs.branch-name }}`
