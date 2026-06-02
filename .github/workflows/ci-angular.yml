@@ -149,8 +149,18 @@ jobs:
           test -f node_modules/@vyracare/design-system/fesm2022/vyracare-design-system.mjs
           test -f node_modules/@vyracare/design-system/styles/_index.scss
 
+      - name: Resolve build configuration
+        run: |
+          set -euo pipefail
+          branch_name="${{ inputs.branch-name }}"
+          if [ "$branch_name" = "release" ] || [[ "$branch_name" == release/* ]]; then
+            echo "BUILD_CONFIGURATION=hml" >> $GITHUB_ENV
+          else
+            echo "BUILD_CONFIGURATION=production" >> $GITHUB_ENV
+          fi
+
       - name: Build Angular App
-        run: npm run build -- --configuration production
+        run: npm run build -- --configuration "${BUILD_CONFIGURATION}"
   
       - name: Get build path dynamically
         id: get-build-path

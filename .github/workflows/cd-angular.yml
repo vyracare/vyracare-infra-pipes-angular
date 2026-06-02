@@ -104,14 +104,17 @@ jobs:
             echo "DEPLOY_ENV=prod" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=green" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
+            echo "BUILD_CONFIGURATION=production" >> $GITHUB_ENV
           elif [ "$branch_name" = "release" ] || [[ "$branch_name" == release/* ]]; then
             echo "DEPLOY_ENV=hml" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=blue" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
+            echo "BUILD_CONFIGURATION=hml" >> $GITHUB_ENV
           else
             echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
+            echo "BUILD_CONFIGURATION=production" >> $GITHUB_ENV
           fi
 
       - name: Validate AWS credentials
@@ -404,7 +407,7 @@ jobs:
 
       # Build Angular (after infra is ensured)
       - name: Build Angular
-        run: npm run build -- --configuration production
+        run: npm run build -- --configuration "${BUILD_CONFIGURATION}"
 
       # Deploy para pasta inativa com timestamp
       - name: Deploy to environment folder with timestamp
@@ -484,11 +487,24 @@ jobs:
           git fetch origin "${target_branch}"
           git checkout -B "${target_branch}" "origin/${target_branch}"
 
+          target_environment_file="${SHELL_ENVIRONMENT_FILE}"
+          if [ "${requested_branch}" = "release" ] || [[ "${requested_branch}" == release/* ]]; then
+            candidate_environment_file="${SHELL_ENVIRONMENT_FILE/environments.prod.ts/environments.hml.ts}"
+            if [ -f "${candidate_environment_file}" ]; then
+              target_environment_file="${candidate_environment_file}"
+            fi
+          elif [ "${target_branch}" = "develop" ]; then
+            candidate_environment_file="${SHELL_ENVIRONMENT_FILE/environments.prod.ts/environments.ts}"
+            if [ -f "${candidate_environment_file}" ]; then
+              target_environment_file="${candidate_environment_file}"
+            fi
+          fi
+
           python <<PY
           from pathlib import Path
           import re
 
-          file_path = Path("${SHELL_ENVIRONMENT_FILE}")
+          file_path = Path("${target_environment_file}")
           property_name = "${SHELL_REMOTE_ENTRY_PROPERTY}"
           remote_entry_url = "${remote_entry_url}"
 
@@ -507,12 +523,12 @@ jobs:
               file_path.write_text(updated, encoding="utf-8")
           PY
 
-          if git diff --quiet -- "${SHELL_ENVIRONMENT_FILE}"; then
+          if git diff --quiet -- "${target_environment_file}"; then
             echo "Nenhuma alteracao necessaria no shell orquestrador."
             exit 0
           fi
 
-          git add "${SHELL_ENVIRONMENT_FILE}"
+          git add "${target_environment_file}"
           git commit -m "fix: atualiza remote entry de ${REPO_NAME}"
           git push origin "${target_branch}"
 
