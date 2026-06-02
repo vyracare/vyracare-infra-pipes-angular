@@ -172,11 +172,32 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
+          npm config set fetch-retries 5
+          npm config set fetch-retry-factor 2
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          npm config set network-timeout 300000
+
+          install_cmd="npm ci"
           if [ -n "$CODEARTIFACT_DOMAIN" ]; then
-            npm install --legacy-peer-deps --package-lock=false
-          else
-            npm ci
+            install_cmd="npm install --legacy-peer-deps --package-lock=false"
           fi
+
+          attempt=1
+          max_attempts=3
+          until [ $attempt -gt $max_attempts ]
+          do
+            echo "Dependency install attempt ${attempt}/${max_attempts}"
+            if eval "$install_cmd"; then
+              exit 0
+            fi
+            if [ $attempt -eq $max_attempts ]; then
+              echo "Dependency install failed after ${max_attempts} attempts."
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 15
+          done
 
       - name: Validate Vyracare Design System package
         if: ${{ env.CODEARTIFACT_DOMAIN != '' }}
