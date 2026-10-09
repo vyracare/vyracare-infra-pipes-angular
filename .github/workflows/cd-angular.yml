@@ -23,6 +23,16 @@ on:
         description: 'Account owner do domain no AWS CodeArtifact'
         required: false
         type: string
+      publish-mobile-update:
+        description: 'Publica o artefato do shell e notifica o orquestrador mobile'
+        required: false
+        default: false
+        type: boolean
+      mobile-repository:
+        description: 'Repositorio que recebe o evento de atualizacao mobile'
+        required: false
+        default: 'vyracare/vyracare-app-mobile'
+        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -102,16 +112,19 @@ jobs:
           branch_name="${{ inputs.branch-name }}"
           if [ "$branch_name" = "main" ]; then
             echo "DEPLOY_ENV=prod" >> $GITHUB_ENV
+            echo "MOBILE_CHANNEL=production" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=green" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
             echo "BUILD_CONFIGURATION=production" >> $GITHUB_ENV
           elif [ "$branch_name" = "release" ] || [[ "$branch_name" == release/* ]]; then
             echo "DEPLOY_ENV=hml" >> $GITHUB_ENV
+            echo "MOBILE_CHANNEL=hml" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=blue" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=" >> $GITHUB_ENV
             echo "BUILD_CONFIGURATION=hml" >> $GITHUB_ENV
           else
             echo "DEPLOY_ENV=dev" >> $GITHUB_ENV
+            echo "MOBILE_CHANNEL=dev" >> $GITHUB_ENV
             echo "DEPLOY_PATH_PREFIX=" >> $GITHUB_ENV
             echo "RESOURCE_SUFFIX=-dev" >> $GITHUB_ENV
             echo "BUILD_CONFIGURATION=dev" >> $GITHUB_ENV
@@ -459,6 +472,29 @@ jobs:
       # InvalidaÃ§Ã£o de cache CloudFront
       - name: Invalidate CloudFront cache
         run: aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_ID }} --paths "/*"
+
+      - name: Publish shell artifact for mobile composition
+        if: ${{ inputs.publish-mobile-update }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-shell-dist
+          path: ${{ env.BUILD_PATH }}
+          retention-days: 7
+
+      - name: Notify mobile release orchestrator
+        if: ${{ inputs.publish-mobile-update }}
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          MOBILE_REPOSITORY: ${{ inputs.mobile-repository }}
+        run: |
+          set -euo pipefail
+          bundle_id="${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}"
+          gh api --method POST "repos/${MOBILE_REPOSITORY}/dispatches" \
+            -f event_type=web-shell-published \
+            -f "client_payload[source_repository]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[run_id]=${GITHUB_RUN_ID}" \
+            -f "client_payload[channel]=${MOBILE_CHANNEL}" \
+            -f "client_payload[bundle_id]=${bundle_id}"
 
       - name: Atualizar referencia no shell orquestrador
         if: env.HAS_ORCHESTRATOR_SHELL == 'true'
