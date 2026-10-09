@@ -475,7 +475,7 @@ jobs:
 
       - name: Publish shell artifact for mobile composition
         if: ${{ inputs.publish-mobile-update }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mobile-shell-dist
           path: ${{ env.BUILD_PATH }}
