@@ -194,8 +194,13 @@ jobs:
           npm config set fetch-retry-maxtimeout 120000
           npm config set fetch-timeout 300000
 
-          install_cmd="npm ci"
-          if [ -n "$CODEARTIFACT_DOMAIN" ]; then
+          if [ -f package-lock.json ]; then
+            install_cmd="npm ci"
+            if [ -n "$CODEARTIFACT_DOMAIN" ]; then
+              install_cmd="npm ci --legacy-peer-deps"
+            fi
+          else
+            echo "package-lock.json ausente; usando fallback legado sem alterar o repositorio."
             install_cmd="npm install --legacy-peer-deps --package-lock=false"
           fi
 
@@ -225,7 +230,8 @@ jobs:
           fi
           npm ls @vyracare/design-system
           test -f node_modules/@vyracare/design-system/package.json
-          test -f node_modules/@vyracare/design-system/index.d.ts
+          DESIGN_SYSTEM_TYPES=$(node -e "const p=require('./node_modules/@vyracare/design-system/package.json'); const value=p.exports?.['.']?.types ?? p.types ?? './index.d.ts'; process.stdout.write(value.replace(/^\.\//, ''))")
+          test -f "node_modules/@vyracare/design-system/$DESIGN_SYSTEM_TYPES"
           test -f node_modules/@vyracare/design-system/fesm2022/vyracare-design-system.mjs
           test -f node_modules/@vyracare/design-system/styles/_index.scss
 
